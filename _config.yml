@@ -42,7 +42,7 @@ jekyll-archives:
     tag: '/tag/:name/'
 
 # Disqus comments
-disqus_shortname: bencentra
+disqus_shortname: JiangBiao
 
 # Google analytics
 # ga_tracking_id: "UA-XXXX-1"
@@ -93,7 +93,7 @@ descriptions:
 #    url:
 #    desc: Friend me on Facebook
 #    share: true
-
+social:
   - name: GitHub
     icon: github
     username: HappySeeker
@@ -156,6 +156,6 @@ protocols:
 
     twitter_image: "/assets/logo.png"
 
-    os_repo: "https://github.com/RichardLitt/wordhoardpress.com"
-    os_rcs_type: "git"
-    os_src: "git@github.com:RichardLitt/wordhoardpress.com.git"
+#    os_repo: "https://github.com/RichardLitt/wordhoardpress.com"
+#    os_rcs_type: "git"
+#    os_src: "git@github.com:RichardLitt/wordhoardpress.com.git"
