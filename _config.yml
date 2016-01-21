@@ -1,7 +1,7 @@
 # External gems
-gems:
-  - jekyll-archives # Sorry, not GitHub pages friendly!
-  - jekyll-sitemap
+#gems:
+#  - jekyll-archives # Sorry, not GitHub pages friendly!
+#  - jekyll-sitemap
 
 exclude:
   - "/vendor/"
@@ -16,8 +16,8 @@ description: >
 # Base URL of site (i.e. /blog). It should always start with a slash,
 # and never end with a slash. Set it to a blank value if hosting at the
 # root of your server.
-baseurl: "/centrarium" # the subpath of your site, e.g. /blog/
-url: "http://bencentra.github.io" # the base hostname & protocol for your site
+#baseurl: "/" # the subpath of your site, e.g. /blog/
+url: "http://happyseeker.github.io" # the base hostname & protocol for your site
 cover: "/assets/header_image.jpg"
 logo: "/assets/logo.png"
 
@@ -25,7 +25,10 @@ logo: "/assets/logo.png"
 markdown: kramdown
 paginate: 5
 paginate_path: "/page:num/"
-inter_post_navigation: false
+highlighter: pygments
+gems: [jekyll-paginate]
+
+#inter_post_navigation: false
 highlightjs_theme: "monokai_sublime"
 
 # Archive settings (see https://github.com/jekyll/jekyll-archives/)
