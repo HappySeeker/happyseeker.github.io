@@ -1,0 +1,10 @@
+---
+layout: post
+title:  "My Linux Kernel Blog"
+date:   2016-01-21 18:43:59
+author: Jiang Biao
+categories: Kernel
+---
+
+我的Linux内核相关的Blog在CU上，之前写过不少，暂时没时间搬家了
+http://blog.chinaunix.net/uid/14528823.html

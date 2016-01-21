@@ -61,6 +61,9 @@ descriptions:
   - cat: Git
     desc: "Git相关经验."
 
+  - cat: Life
+    desc: "生活相关."
+
 # Social icons and sharing options
 #
 # Social settings are used in two places:
@@ -100,7 +103,7 @@ descriptions:
 
   - name: LinkedIn
     icon: linkedin
-    username: humjb_1983@126.com
+    username: JiangBiao
     url: https://www.linkedin.com/in/%E5%BD%AA-%E8%92%8B-213712102?trk=hp-identity-name
     desc: Connect with me on LinkedIn
     share: true
@@ -153,6 +156,6 @@ protocols:
 
     twitter_image: "/assets/logo.png"
 
-#    os_repo: "https://github.com/RichardLitt/wordhoardpress.com"
-#    os_rcs_type: "git"
-#    os_src: "git@github.com:RichardLitt/wordhoardpress.com.git"
+    os_repo: "https://github.com/RichardLitt/wordhoardpress.com"
+    os_rcs_type: "git"
+    os_src: "git@github.com:RichardLitt/wordhoardpress.com.git"

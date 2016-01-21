@@ -1,0 +1,10 @@
+---
+layout: post
+title:  "New Mission on Graphic"
+date:   2016-01-21 19:43:59
+author: Jiang Biao
+categories: Graphic
+---
+
+新的项目，新的技术，从头学习图形相关技术：
+Xorg、OpenGL、GTK、Cairo、QT、3D加速、2D加速等等，一切从头开始，路漫漫而修远兮！
