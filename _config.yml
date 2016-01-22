@@ -10,7 +10,7 @@ exclude:
 title: HappySeeker
 subtitle: "HappySeeker's blog"
 email: jiang.biao@hotmail.com
-name: JiangBiao
+name: jiangbiao
 description: >
   HappySeeker's blog & My Tech Life.
 # Base URL of site (i.e. /blog). It should always start with a slash,
@@ -42,7 +42,7 @@ jekyll-archives:
     tag: '/tag/:name/'
 
 # Disqus comments
-disqus_shortname: JiangBiao
+disqus_shortname: jiangbiao
 
 # Google analytics
 # ga_tracking_id: "UA-XXXX-1"
