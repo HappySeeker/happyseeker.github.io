@@ -42,7 +42,7 @@ jekyll-archives:
     tag: '/tag/:name/'
 
 # Disqus comments
-disqus_shortname: Jiang Biao
+disqus_shortname: JiangBiao
 
 # Google analytics
 # ga_tracking_id: "UA-XXXX-1"
