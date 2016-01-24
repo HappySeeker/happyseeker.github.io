@@ -6,5 +6,6 @@ author: Jiang Biao
 categories: Kernel
 ---
 
-我的Linux内核相关的Blog在CU上，之前写过不少，暂时没时间搬家了
-http://blog.chinaunix.net/uid/14528823.html
+我的Linux内核相关的Blog在CU上，之前写过不少，暂时没时间搬家了，有兴趣可以先去逛逛：
+
+[我的ChinaUnix Blog](http://blog.chinaunix.net/uid/14528823.html)
