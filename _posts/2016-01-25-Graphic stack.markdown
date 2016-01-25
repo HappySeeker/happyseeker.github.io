@@ -26,13 +26,13 @@ categories: Graphic
 
 当前流行的图形系统(针对Xorg的环境，Wayland和其他后端暂不讨论)的层次结构，最权威的图莫过于来自XFree86官方的说明图了：
 
-![来自XFree86官方的架构图](https://github.com/HappySeeker/happyseeker.github.io/raw/master/_posts/Graphic%20Arch%20from%20XFree86.bmp)
+![来自XFree86官方的架构图](https://github.com/HappySeeker/happyseeker.github.io/raw/master/_posts/Graphic%20Arch%20from%20XFree86.png)
 
 这个图包含的内容非常全，结构也比较清晰，但是如果不熟悉其中的相关概念和术语，则很难准确理解。
 
 下图为根据个人理解重新整理的架构图，附带相关说明，希望能让大家的理解更容易些，也作为个人后续继续深入分析的参考和指引，可以随时翻阅，后续在有新内容或是发现问题时，也会随时修正：
 
-![个人理解的Graphic Stack](https://github.com/HappySeeker/happyseeker.github.io/raw/master/_posts/graphic%20stack.svg)
+![个人理解的Graphic Stack](https://github.com/HappySeeker/happyseeker.github.io/raw/master/_posts/graphic%20stack.png)
  
 相关解释如下：
 
