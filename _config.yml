@@ -58,8 +58,11 @@ descriptions:
   - cat: Graphic
     desc: "图形相关技术."
 
-  - cat: Git
-    desc: "Git相关经验."
+  - cat: Trouble Shooting Cases
+    desc: "故障分析和相关案例."
+
+  - cat: Git 
+    desc: "Git相关经验和开源相关内容."
 
   - cat: Life
     desc: "生活相关."
