@@ -86,6 +86,7 @@ Cairo-perf-trace工具编译完成后，执行benchmark中的gnome-terminal-vim�
 	}
 
 只能是从`cairo_create()`进入的了：
+
 	cairo_t *
 	cairo_create (cairo_surface_t *target)
 	{

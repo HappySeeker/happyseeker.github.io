@@ -8,7 +8,7 @@ exclude:
 
 # Site settings
 title: HappySeeker
-subtitle: "HappySeeker's blog"
+subtitle: "HappySeeker's blog & My Tech Life"
 email: jiang.biao@hotmail.com
 name: jiangbiao
 description: >
@@ -23,7 +23,7 @@ logo: "/assets/logo.png"
 
 # Build settings
 markdown: kramdown
-paginate: 5
+paginate: 10
 paginate_path: "/page:num/"
 highlighter: pygments
 gems: [jekyll-paginate]
