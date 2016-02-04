@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "移植mintMenu出现coredump问题"
-date:   2016-02-01 06:012:15
+date:   2016-02-01 06:12:15
 author: Jiang Biao
 categories: Graphic
 ---
