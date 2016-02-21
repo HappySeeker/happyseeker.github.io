@@ -25,7 +25,7 @@ logo: "/assets/logo.png"
 markdown: kramdown
 paginate: 10
 paginate_path: "/page:num/"
-highlighter: pygments
+highlighter: rouge
 gems: [jekyll-paginate]
 
 #inter_post_navigation: false
