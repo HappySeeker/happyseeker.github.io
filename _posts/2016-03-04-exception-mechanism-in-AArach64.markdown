@@ -62,7 +62,7 @@ Linux内核中，中断向量表实现在entry.S文件中，代码如下：
 		 * Exception vectors.
 		 */
 		
-			.align	11
+			.align	11 //EL1的异常向量表保存在VBAR_EL1寄存器中（Vector Base Address Register (EL1)），该寄存器的低11bit是reserve的，11～63表示了Vector Base Address，因此这里的异常向量表是2K对齐的。
 		/*el1代表内核态，el0代表用户态*/
 		ENTRY(vectors)
 			ventry	el1_sync_invalid		// Synchronous EL1t 
