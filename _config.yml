@@ -64,6 +64,9 @@ descriptions:
   - cat: Git 
     desc: "Git相关经验和开源相关内容."
 
+  - cat: Agile 
+    desc: "敏捷相关."
+
   - cat: Life
     desc: "生活相关."
 
