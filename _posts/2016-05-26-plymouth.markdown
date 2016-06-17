@@ -1,0 +1,885 @@
+---
+layout: post
+title:  "开机动画plymouth相关原理"
+date:   2016-05-26 06:02:05
+author: HappySeeker
+categories: Graphic
+---
+
+# 背景
+
+最近遇到桌面系统中，开机动画卡顿的问题，第一印象感觉好像是显卡驱动或者是硬件问题，绘图慢，从而导致卡顿。
+
+但是，打开plymouth相关的调试开关后并没有发现明显的错误打印，甚是疑惑。于是，对开机动画组件plymouth做了一番研究，其实就是看代码了，搞明白其原理后，才明白原来是这么回事儿。
+
+# 开机动画相关概念
+
+开机动画就是在开机后，系统启动过程中看到的一些动画显示，通常的桌面系统中(服务器系统不一定)，都会有这样的动画，目的是不想让用户看到具体的启动过程，另一方面也更美观。
+
+Linux中，开机动画基本都是用开源组件plymouth，没有研究名字的来源，有点怪怪的~
+
+# plymouth相关原理
+
+终于到正题了，plymouth总体来说，比我预想中的复杂，并不是简单的一些动画而已，其功能还比较强大，而且跟systemd绑在一起，有点过度设计的嫌疑~
+
+plymouth整体分两个主要部分(还有一些边角的功能，不做分析了)，服务端和客户端，典型的C/S模型。服务端和客户端直接通过socket通信。
+
+- 服务端。是一个后台守护进程plymouthd，用于处理请求，请求种类有很多，比如典型的update、quit等。服务端通过epoll监控相关socket(也有管道），监听来自客户端的信息。
+- 客户端。客户端可以多种多样，典型的客户端有：plymouth程序、systemd。客户端通过socket(也有管道）与服务端建立连接，并通过socket(也有管道）发送具体的请求。
+
+## plymouthd服务端
+
+如前面所说，plymouthd守护进程作为开机动画的服务端，是最核心的部分，这节主要分析plymouthd的相关原理。
+
+### 主函数流程
+
+plymouthd服务端的主函数入口为src/main.c文件中main()函数，主要流程为：
+
+1. 解析参数
+2. 创建后台守护进程
+3. 初始化环境
+4. 启动服务器(socket)，并监听(listen)来自客户端的连接消息
+5. 从cache文件中获取每个服务对应的进度信息
+6. 进入消息循环
+
+代码如下(含注释)：
+
+	/*plymouthd服务的主函数入口*/
+	int
+	main (int    argc,
+	      char **argv)
+	{
+	  state_t state = { 0 };
+	  int exit_code;
+	  bool should_help = false;
+	  bool no_daemon = false;
+	  bool debug = false;
+	  bool attach_to_session;
+	  ply_daemon_handle_t *daemon_handle = NULL;
+	  char *mode_string = NULL;
+	  char *kernel_command_line = NULL;
+	  char *tty = NULL;
+	  /*参数解析器*/
+	  state.command_parser = ply_command_parser_new ("plymouthd", "Splash server");
+	  /*创建默认消息循环*/
+	  state.loop = ply_event_loop_get_default ();
+	  /*参数*/
+	  ply_command_parser_add_options (state.command_parser,
+	                                  "help", "This help message", PLY_COMMAND_OPTION_TYPE_FLAG,
+	                                  "attach-to-session", "Redirect console messages from screen to log", PLY_COMMAND_OPTION_TYPE_FLAG,
+	                                  "no-daemon", "Do not daemonize", PLY_COMMAND_OPTION_TYPE_FLAG,
+	                                  "debug", "Output debugging information", PLY_COMMAND_OPTION_TYPE_FLAG,
+	                                  "debug-file", "File to output debugging information to", PLY_COMMAND_OPTION_TYPE_STRING,
+	                                  "mode", "Mode is one of: boot, shutdown", PLY_COMMAND_OPTION_TYPE_STRING,
+	                                  "pid-file", "Write the pid of the daemon to a file", PLY_COMMAND_OPTION_TYPE_STRING,
+	                                  "kernel-command-line", "Fake kernel command line to use", PLY_COMMAND_OPTION_TYPE_STRING,
+	                                  "tty", "TTY to use instead of default", PLY_COMMAND_OPTION_TYPE_STRING,
+	                                  NULL);
+	  /*解析参数*/
+	  if (!ply_command_parser_parse_arguments (state.command_parser, state.loop, argv, argc))
+	    {
+	      char *help_string;
+	
+	      help_string = ply_command_parser_get_help_string (state.command_parser);
+	
+	      ply_error_without_new_line ("%s", help_string);
+	
+	      free (help_string);
+	      return EX_USAGE;
+	    }
+	  /*获取参数*/
+	  ply_command_parser_get_options (state.command_parser,
+	                                  "help", &should_help,
+	                                  "attach-to-session", &attach_to_session,
+	                                  "mode", &mode_string,
+	                                  "no-daemon", &no_daemon,
+	                                  "debug", &debug,
+	                                  "debug-file", &debug_buffer_path,
+	                                  "pid-file", &pid_file,
+	                                  "tty", &tty,
+	                                  "kernel-command-line", &kernel_command_line,
+	                                  NULL);
+	
+	  if (should_help)
+	    {
+	      char *help_string;
+	
+	      help_string = ply_command_parser_get_help_string (state.command_parser);
+	
+	      if (argc < 2)
+	        fprintf (stderr, "%s", help_string);
+	      else
+	        printf ("%s", help_string);
+	
+	      free (help_string);
+	      return 0;
+	    }
+	  /*是否开启debug选项，开启后能有详细的日志*/
+	  if (debug && !ply_is_tracing ())
+	    ply_toggle_tracing ();
+	
+	  if (mode_string != NULL)
+	    {
+	      if (strcmp (mode_string, "shutdown") == 0)
+	        state.mode = PLY_MODE_SHUTDOWN;
+	      else if (strcmp (mode_string, "updates") == 0)
+	        state.mode = PLY_MODE_UPDATES;
+	      else
+	        state.mode = PLY_MODE_BOOT;
+	
+	      free (mode_string);
+	    }
+	
+	  if (tty != NULL)
+	    {
+	      state.default_tty = tty;
+	    }
+	
+	  if (kernel_command_line != NULL)
+	    {
+	      strncpy (state.kernel_command_line, kernel_command_line, sizeof (state.kernel_command_line));
+	      state.kernel_command_line[sizeof (state.kernel_command_line) - 1] = '\0';
+	      state.kernel_command_line_is_set = true;
+	    }
+	
+	  if (geteuid () != 0)
+	    {
+	      ply_error ("plymouthd must be run as root user");
+	      return EX_OSERR;
+	    }
+	
+	  chdir ("/");
+	  signal (SIGPIPE, SIG_IGN);
+	
+	  if (! no_daemon)
+	    {
+	      /*创建后台守护进程，前台进程退出*/
+	      daemon_handle = ply_create_daemon ();
+	
+	      if (daemon_handle == NULL)
+	        {
+	          ply_error ("plymouthd: cannot daemonize: %m");
+	          return EX_UNAVAILABLE;
+	        }
+	    }
+	
+	  if (debug)
+	    debug_buffer = ply_buffer_new ();
+	
+	  signal (SIGABRT, on_crash);
+	  signal (SIGSEGV, on_crash);
+	
+	  /* before do anything we need to make sure we have a working
+	   * environment.
+	   */
+	  /*初始化环境*/
+	  if (!initialize_environment (&state))
+	    {
+	      if (errno == 0)
+	        {
+	          if (daemon_handle != NULL)
+	            ply_detach_daemon (daemon_handle, 0);
+	          return 0;
+	        }
+	
+	      ply_error ("plymouthd: could not setup basic operating environment: %m");
+	      if (daemon_handle != NULL)
+	        ply_detach_daemon (daemon_handle, EX_OSERR);
+	      return EX_OSERR;
+	    }
+	
+	  /* Make the first byte in argv be '@' so that we can survive systemd's killing
+	   * spree when going from initrd to /, and so we stay alive all the way until
+	   * the power is killed at shutdown.
+	   * http://www.freedesktop.org/wiki/Software/systemd/RootStorageDaemons
+	   */
+	  argv[0][0] = '@';
+	  /*启动服务器，监听客户端的连接消息*/
+	  state.boot_server = start_boot_server (&state);
+	
+	  if (state.boot_server == NULL)
+	    {
+	      ply_trace ("plymouthd is already running");
+	
+	      if (daemon_handle != NULL)
+	        ply_detach_daemon (daemon_handle, EX_OK);
+	      return EX_OK;
+	    }
+	
+	  state.boot_buffer = ply_buffer_new ();
+	
+	  if (attach_to_session)
+	    {
+	      state.should_be_attached = attach_to_session;
+	      if (!attach_to_running_session (&state))
+	        {
+	          ply_trace ("could not redirect console session: %m");
+	          if (! no_daemon)
+	            ply_detach_daemon (daemon_handle, EX_UNAVAILABLE);
+	          return EX_UNAVAILABLE;
+	        }
+	    }
+	  /*创建进度相关的信息，开机动画相关的进度信息都在progress结构中*/
+	  state.progress = ply_progress_new ();
+	  /*
+	     * 从cache文件(上一次启动后写入)读取服务和对应的进度信息，从配置文件/var/lib/plymouth/boot-duration中读取，
+	     * 这个很关键，用来决定每个服务启动后相应的进度信息。
+	     */
+	  ply_progress_load_cache (state.progress,
+	                           get_cache_file_for_mode (state.mode));
+	
+	  if (pid_file != NULL)
+	    write_pid_file (pid_file);
+	
+	  if (daemon_handle != NULL
+	      && !ply_detach_daemon (daemon_handle, 0))
+	    {
+	      ply_error ("plymouthd: could not tell parent to exit: %m");
+	      return EX_UNAVAILABLE;
+	    }
+	
+	  ply_trace ("entering event loop");
+	  /*进入消息循环，其中通过epoll监控消息，消息来后进行相应的处理，更新进度在这里面完成*/
+	  exit_code = ply_event_loop_run (state.loop);
+	  ply_trace ("exited event loop");
+	  /*走到这里，说明已经收到了quit请求，或者是关闭信号，退出了消息循环，然后plymouthd就要开始退出了，在系统启动完成后，会发送quit信息，让plymouthd退出*/
+	  ply_boot_splash_free (state.boot_splash);
+	  state.boot_splash = NULL;
+	
+	  ply_command_parser_free (state.command_parser);
+	
+	  ply_boot_server_free (state.boot_server);
+	  state.boot_server = NULL;
+	
+	  ply_trace ("freeing terminal session");
+	  ply_terminal_session_free (state.session);
+	
+	  ply_buffer_free (state.boot_buffer);
+	  ply_progress_free (state.progress);
+	
+	  ply_trace ("exiting with code %d", exit_code);
+	  
+	  if (debug_buffer != NULL)
+	    {
+	      /*将调试缓存中的信息dump到指定日志文件中，默认的日志文件为/var/log/plymouth-debug.log，文件可以通过--debug --debug-file指定*/
+	      dump_debug_buffer_to_file ();
+	      ply_buffer_free (debug_buffer);
+	    }
+	
+	  ply_free_error_log();
+	
+	  return exit_code;
+	}
+
+### 消息循环
+
+plymouthd消息循环也就是常见的一个死循环，在循环中监控消息、处理消息。
+
+具体来说，有如下几个关键点：
+
+- 在主函数流程中通过`ply_event_loop_get_default`创建消息循环和服务端的套接字。
+
+- 在`start_boot_server`中创建服务端套接字，listen，并将相关的socket加入到epoll中监控列表中(`ply_event_loop_watch_fd->ply_event_loop_get_source_from_fd->ply_event_loop_add_source->epoll_ctl`)，同时设置相应的处理函数。
+
+- 通过`ply_event_loop_run`进入消息循环，在循环中通过epoll_wait等待相关的事件，并在等到相关事件后，调用相关的接口进行后续处理。
+
+
+相关代码如下：
+
+`start_boot_server`：
+
+	/*启动服务端，设置相应的事件处理钩子，并listen*/
+	static ply_boot_server_t *
+	start_boot_server (state_t *state)
+	{
+	  ply_boot_server_t *server;
+	  /*创建server，并设置不同事件的处理钩子*/
+	  server = ply_boot_server_new ((ply_boot_server_update_handler_t) on_update,
+	                                (ply_boot_server_change_mode_handler_t) on_change_mode,
+	                                (ply_boot_server_system_update_handler_t) on_system_update,
+	                                (ply_boot_server_ask_for_password_handler_t) on_ask_for_password,
+	                                (ply_boot_server_ask_question_handler_t) on_ask_question,
+	                                (ply_boot_server_display_message_handler_t) on_display_message,
+	                                (ply_boot_server_hide_message_handler_t) on_hide_message,
+	                                (ply_boot_server_watch_for_keystroke_handler_t) on_watch_for_keystroke,
+	                                (ply_boot_server_ignore_keystroke_handler_t) on_ignore_keystroke,
+	                                (ply_boot_server_progress_pause_handler_t) on_progress_pause,
+	                                (ply_boot_server_progress_unpause_handler_t) on_progress_unpause,
+	                                (ply_boot_server_show_splash_handler_t) on_show_splash,
+	                                (ply_boot_server_hide_splash_handler_t) on_hide_splash,
+	                                (ply_boot_server_newroot_handler_t) on_newroot,
+	                                (ply_boot_server_system_initialized_handler_t) on_system_initialized,
+	                                (ply_boot_server_error_handler_t) on_error,
+	                                (ply_boot_server_deactivate_handler_t) on_deactivate,
+	                                (ply_boot_server_reactivate_handler_t) on_reactivate,
+	                                (ply_boot_server_quit_handler_t) on_quit,
+	                                (ply_boot_server_has_active_vt_handler_t) on_has_active_vt,
+	                                state);
+	  /*listen相关的套接字*/
+	  if (!ply_boot_server_listen (server))
+	    {
+	      ply_save_errno ();
+	      ply_boot_server_free (server);
+	      ply_restore_errno ();
+	      return NULL;
+	    }
+	  /*监听来自客户端连接请求和退出消息*/
+	  ply_boot_server_attach_to_event_loop (server, state->loop);
+	
+	  return server;
+	}
+
+`start_boot_server->ply_boot_server_attach_to_event_loop():`
+
+	/*将boot server加入到事件循环中，并监听来自客户端的连接请求*/
+	void
+	ply_boot_server_attach_to_event_loop (ply_boot_server_t *server,
+	                                      ply_event_loop_t  *loop)
+	{
+	  assert (server != NULL);
+	  assert (loop != NULL);
+	  assert (server->loop == NULL);
+	  assert (server->socket_fd >= 0);
+	
+	  server->loop = loop;
+	  /*监听来自客户端的连接请求，有连接过来时，交给ply_boot_server_on_new_connection处理*/
+	  ply_event_loop_watch_fd (loop, server->socket_fd,
+	                           PLY_EVENT_LOOP_FD_STATUS_HAS_DATA,
+	                           (ply_event_handler_t)
+	                           ply_boot_server_on_new_connection,
+	                           (ply_event_handler_t)
+	                           ply_boot_server_on_hangup,
+	                           server);
+	  ply_event_loop_watch_for_exit (loop, (ply_event_loop_exit_handler_t) 
+	                                 ply_boot_server_detach_from_event_loop,
+	                                 server); 
+	}
+
+主消息循环：`ply_event_loop_run`:
+
+	/*主消息循环*/
+	int
+	ply_event_loop_run (ply_event_loop_t *loop)
+	{
+	  while (!loop->should_exit)
+	  	/*循环处理事件，使用epoll监控事件*/
+	    ply_event_loop_process_pending_events (loop);
+	
+	  ply_event_loop_run_exit_closures (loop);
+	  ply_event_loop_free_sources (loop);
+	  ply_event_loop_free_timeout_watches (loop);
+	
+	  loop->should_exit = false;
+	
+	  return loop->exit_code;
+	}
+
+`ply_event_loop_run->ply_event_loop_process_pending_events`
+
+
+	/*在主消息循环中处理各种事件*/
+	void
+	ply_event_loop_process_pending_events (ply_event_loop_t *loop)
+	{
+	  int number_of_received_events, i;
+	  static struct epoll_event events[PLY_EVENT_LOOP_NUM_EVENT_HANDLERS];
+	
+	  assert (loop != NULL);
+	
+	  memset (events, -1,
+	          PLY_EVENT_LOOP_NUM_EVENT_HANDLERS * sizeof (struct epoll_event));
+	
+	  do
+	   {
+	     int timeout;
+		 /*计算epoll_wait的超时时间，主要根据loop->wakeup_time，而loop->wakeup_time来源于update流程中设置的超时*/
+	     if (fabs (loop->wakeup_time - PLY_EVENT_LOOP_NO_TIMED_WAKEUP) <= 0)
+	       timeout = -1;
+	     else
+	       {
+	       	 /*注意，这里*1000，默认超时时间应该是33s，应该很长了，所以，这里应该主要依赖于事件驱动，这里的超时很少起作用*/
+	         timeout = (int) ((loop->wakeup_time - ply_get_timestamp ()) * 1000);
+	         timeout = MAX (timeout, 0);
+	       }
+		 /*使用epoll_wait监控来自客户端的事件*/
+	     number_of_received_events = epoll_wait (loop->epoll_fd, events,
+	                                             PLY_EVENT_LOOP_NUM_EVENT_HANDLERS,
+	                                             timeout);
+		 /*异常退出*/
+	     if (number_of_received_events < 0)
+	       {
+	         if (errno != EINTR && errno != EAGAIN)
+	           {
+	             ply_event_loop_exit (loop, 255);
+	             return;
+	           }
+	       }
+		 /*等到事件发生，或者超时*/
+	     else
+	       {
+	         /* Reference all sources, so they stay alive for the duration of this
+	          * iteration of the loop.
+	          */
+	         for (i = 0; i < number_of_received_events; i++)
+	           {
+	             ply_event_source_t *source;
+	             source = (ply_event_source_t *) (events[i].data.ptr);
+	
+	             ply_event_source_take_reference (source);
+	           }
+	       }
+	
+	     /* First handle timeouts */
+		 /*处理update和其他流程中设置的定时器(假的定时器)，进度条更新依赖于这个*/
+	     ply_event_loop_handle_timeouts (loop);
+	    }
+	  while (number_of_received_events < 0);
+	
+	  /* Then process the incoming events
+	   */
+	  /*处理具体的事件*/
+	  for (i = 0; i < number_of_received_events; i++)
+	    {
+	      ply_event_source_t *source;
+	      ply_event_loop_fd_status_t status;
+	      bool is_disconnected;
+	
+	      source = (ply_event_source_t *) (events[i].data.ptr);
+	      status = ply_event_loop_get_fd_status_from_poll_mask (events[i].events);
+	
+	      is_disconnected = false;
+	      if ((events[i].events & EPOLLHUP) || (events[i].events & EPOLLERR))
+	        {
+	          int bytes_ready;
+	
+	          bytes_ready = 0;
+	          if (ioctl (source->fd, FIONREAD, &bytes_ready) < 0)
+	            bytes_ready = 0;
+	
+	          if (bytes_ready <= 0)
+	            is_disconnected = true;
+	        }
+	
+	      if (is_disconnected)
+	        {
+	          ply_event_loop_disconnect_source (loop, source);
+	        }
+		  /*判断相关请求，包括连接请求和更新请求等，并调用相关的处理钩子*/
+	      else if (ply_event_loop_source_has_met_status (source, status))
+	        ply_event_loop_handle_met_status_for_source (loop, source, status);
+	
+	      if (loop->should_exit)
+	        break;
+	    }
+	
+	  /* Finally, kill off any unused sources
+	   */
+	  for (i = 0; i < number_of_received_events; i++)
+	    {
+	      ply_event_source_t *source;
+	
+	      source = (ply_event_source_t *) (events[i].data.ptr);
+	
+	      ply_event_source_drop_reference (source);
+	    }
+	}
+
+流程实在太多，代码太多，后面摘取几个主要流程说明。
+
+### 客户端连接消息处理
+
+以客户端连接的消息处理流程为例，说明消息循环的主要工作流程。
+
+客户端要向客户端发送请求，需要先建立连接，建立连接的过程在客户端部分描述，大概就是：创建套接字，然后连接服务端的套接字。
+
+由于服务端epoll监控了服务端的socket，所以，当客户端connect时，服务端能通过epoll_wait()监控到，并进行相应处理。相应代码流程如下：
+
+	ply_event_loop_run-->
+      ply_event_loop_process_pending_events -->
+	    ply_event_loop_handle_met_status_for_source-->
+	      destination->status_met_handler-->
+		    ply_boot_server_on_new_connection -->
+			  ply_event_loop_watch_fd
+
+在`ply_boot_server_on_new_connection`创建新的socket，用于传输数据(请求)。
+
+在`ply_event_loop_watch_fd`中将新的socket加入到epoll的监控列表中，并设置数据(请求)处理接口为`ply_boot_connection_on_request`
+
+### 客户端数据(请求)处理
+
+客户端在建立连接后，服务端为其创建新的socket，并监控该socket上的数据(请求)。
+
+客户端发送的请求以数据方式写入相应的socket，写入后，服务端监控到相应的数据，调用`ply_boot_connection_on_request`进行处理，代码流程为：
+
+	ply_event_loop_run-->
+	  ply_event_loop_process_pending_events -->
+	    ply_event_loop_handle_met_status_for_source-->
+	      destination->status_met_handler-->
+		    ply_boot_connection_on_request
+
+`ply_boot_connection_on_request`中，会读取请求内容，并根据请求内容，执行不同的流程。
+
+开机动画中的进度条(动画)更新动作在这里完成，此时收到的是update请求，该请求是systemd发送过来的，systemd在每启动完一个服务时，都会向plymouthd发送相应的update请求，由此，开机动画中能根据服务的启动顺序、驱动时间来更新相应的进度或动画信息。后面再描述。
+
+## 开机动画update流程
+
+开机动画的update是本文重点关注的流程，也是理解开机动画为什么卡顿的关键。
+
+开机动画update分两个阶段：
+
+1. 开始阶段。该阶段主要是通过plymouth客户端发送show-splash请求，命令格式为`plymouth show-splash`，该命令在plymouth-start.service服务中调用，具体格式后面描述。在这个阶段中，会启动开机动画，显示动画中的第一帧，并设置update相关的定时器。具体后面描述。
+2. 更新阶段。这个阶段主要是通过systemd作为客户端向服务端发送update请求，流程如前面描述。在这个流程中，会检查前面设置的update定时器，并调用相关update进度的流程，更新开机动画显示的帧。
+
+### 开始阶段
+
+开始阶段相关的代码流程如下，内容太多，不相信描述了。自己看代码吧：
+
+	on_show_splash
+	  show_default_splash
+	    start_boot_splash
+	      ply_boot_splash_show
+	  		show_splash_screen(two-steps)
+		      start_progress_animation
+		      view_start_progress_animation
+		      ply_progress_animation_show
+		      ply_progress_animation_draw
+		      ply_pixel_display_draw_area
+		      ply_pixel_display_flush
+	  		ply_boot_splash_update_progress
+
+这里关键的就是`ply_boot_splash_update_progress`，其中会更新动画(进度)，并会设置下次更新的伪定时器：
+
+	static void
+	ply_boot_splash_update_progress (ply_boot_splash_t *splash)
+	{
+	  double percentage=0.0;
+	  double time=0.0;
+	
+	  assert (splash != NULL);
+	
+	  if (splash->progress)
+	    {
+	      percentage = ply_progress_get_percentage(splash->progress);
+	      time = ply_progress_get_time(splash->progress);
+	    }
+	  /*动画(进度)更新*/
+	  if (splash->plugin_interface->on_boot_progress != NULL)
+	    splash->plugin_interface->on_boot_progress (splash->plugin,
+	                                                time,
+	                                                percentage);
+	  /*设置update的定时器33ms，但这个并不是真正的定时器，也不是按33ms的周期来触发的，触发还依赖于systemd的update请求*/
+	  ply_event_loop_watch_for_timeout (splash->loop,
+	                                   1.0 / UPDATES_PER_SECOND,
+	                                   (ply_event_loop_timeout_handler_t)
+	                                   ply_boot_splash_update_progress, splash);
+	}
+
+### 更新阶段
+
+systemd向plymouthd发送update请求，plymouthd收到请求后进行处理，在`ply_event_loop_process_pending_events`函数中处理，代码在前面已经贴出，其中的关键的是调用了`ply_event_loop_handle_timeouts`函数，其中处理了之前在`ply_boot_splash_update_progress`中设置的定时器，定时器的处理函数还是`ply_boot_splash_update_progress`函数，在其中进行实际的进度更新。
+
+代码流程如下：
+
+	ply_event_loop_run-->
+	  ply_event_loop_process_pending_events -->
+	    ply_event_loop_handle_timeouts-->
+	      ply_boot_splash_update_progress -->
+			on_boot_progress -->
+      		  update_progress_animation -->
+        		ply_progress_animation_set_percent_done -->
+        		  ply_progress_animation_draw -->
+					ply_pixel_display_draw_area -->
+    				  ply_pixel_display_flush -->
+
+
+## 绘图流程
+
+这节讲述开机动画中的绘图流程，主要关注动画中的画面(图片)是如何显示到显示器上的，涉及图形显示相关的比较底层的实现细节，跟具体驱动相关，满足部分同学的好奇心。
+
+还是先简单描述下流程：
+
+1. 初始化阶段，分配内存，并设置Framebuffer。
+2. 显示时，将相应的图片内容拷贝到相应的Framebuffer中即可。
+
+简单吧，这里没有使用opengl或者其他高级接口，因为在系统启动最初就需要显示(此时很多模块都还没有准备好)，越直接越好，这里已经相当直接了：直接向Framebuffer中拷贝图片。但这个过程中，使用了drm的接口，间接的使用了底层驱动的接口。
+
+代码流程接上面的“更新流程”：
+
+	ply_pixel_display_flush
+	  ply_renderer_flush_head
+	    ply_renderer_map_to_device
+	  	  map_to_device
+	  		ply_renderer_head_map
+			  backend->driver_interface->create_buffer 
+			  ply_renderer_head_redraw
+				flush_head
+				  ply_renderer_head_flush_area
+					flush_area
+					  memcpy
+
+### 分配Framebuffer流程
+
+分配Framebuffer在上述的“backend->driver_interface->create_buffer”流程中，这里的`create_buffer`接口根据不同的显卡，调用相应的驱动接口实现，以raedon显卡为例：
+	
+	static uint32_t
+	create_buffer (ply_renderer_driver_t *driver,
+	               unsigned long          width,
+	               unsigned long          height,
+	               unsigned long         *row_stride)
+	{
+	  struct radeon_bo *buffer_object;
+	  ply_renderer_buffer_t *buffer;
+	  uint32_t buffer_id;
+	
+	  *row_stride = ply_round_to_multiple (width * 4, 256);
+	  /*调用显卡驱动bo创建接口，分配内存，创建buffer，实际以bo的形式，这里指定的GTT，说明是在内存(非显存)上分配*/
+	  buffer_object = radeon_bo_open (driver->manager, 0,
+	                                  height * *row_stride,
+	                                  0, RADEON_GEM_DOMAIN_GTT, 0);
+	
+	  if (buffer_object == NULL)
+	    {
+	      ply_trace ("Could not allocate GEM object for frame buffer: %m");
+	      return 0;
+	    }
+	  /*调用drm驱动接口，将刚分配的buffer设置为Framebuffer*/
+	  if (drmModeAddFB (driver->device_fd, width, height,
+	                    24, 32, *row_stride, buffer_object->handle,
+	                    &buffer_id) != 0)
+	    {
+	      ply_trace ("Could not set up GEM object as frame buffer: %m");
+	      radeon_bo_unref (buffer_object);
+	      return 0;
+	    }
+	
+	  buffer = ply_renderer_buffer_new (driver,
+	                                    buffer_object, buffer_id,
+	                                    width, height, *row_stride);
+	  buffer->added_fb = true;
+	  ply_hashtable_insert (driver->buffers,
+	                        (void *) (uintptr_t) buffer_id,
+	                        buffer);
+	
+	  return buffer_id;
+	}
+
+注意，其中关键的两个函数`radeon_bo_open`和`drmModeAddFB`，分别实现了内存分配和Framebuffer设置，这里的内存是在主存上分配的。
+
+关于在显存还是在主存上分配Framebuffer，见我的另一篇文章。
+
+### 数据拷贝流程
+
+这个流程很简单，这里就不列代码了，本质上就是使用memcpy将图片中的内容拷贝到Framebuffer对应的内存中即可。至于这个图片内容最终是如何显示到显示器上的，这个过程需要大家自行思考，仔细理解一下。
+
+
+## systemd客户端
+
+systemd作为plymouthd的客户端，可以向plymouthd发送请求，开机动画中的动画(进度)的更新正式依赖与此。有关systemd的具体原理和细节我们这里不讨论，这里仅讨论与开机动画相关的部分。
+
+我们知道，systemd中会启动很多的服务，当systemd完成一个服务的启动时，会在其子进程的SIGCHLD信号的处理过程中，向plymouthd发送update请求，也就表示当一个服务启动完成时，开机动画就会进行相应的更新。
+
+systemd相关代码流程如下：
+	manager_dispatch_signal_fd
+	  manager_dispatch_sigchld
+		invoke_sigchld_event
+	      service_sigchld_event
+			service_enter_start
+			  service_set_state
+				unit_notify
+					manager_send_unit_plymouth
+
+`manager_send_unit_plymouth`:
+
+	void manager_send_unit_plymouth(Manager *m, Unit *u) {
+        union sockaddr_union sa = PLYMOUTH_SOCKET;
+
+        int n = 0;
+        _cleanup_free_ char *message = NULL;
+        _cleanup_close_ int fd = -1;
+
+        /* Don't generate plymouth events if the service was already
+         * started and we're just deserializing */
+        if (m->n_reloading > 0)
+                return;
+
+        if (m->running_as != SYSTEMD_SYSTEM)
+                return;
+
+        if (detect_container(NULL) > 0)
+                return;
+
+        if (u->type != UNIT_SERVICE &&
+            u->type != UNIT_MOUNT &&
+            u->type != UNIT_SWAP)
+                return;
+
+        /* We set SOCK_NONBLOCK here so that we rather drop the
+         * message then wait for plymouth */
+        /*创建plymouth客户端套接字，用于将plymouthd发送update请求*/
+        fd = socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK, 0);
+        if (fd < 0) {
+                log_error_errno(errno, "socket() failed: %m");
+                return;
+        }
+		/*连接plymouthd服务端*/
+        if (connect(fd, &sa.sa, offsetof(struct sockaddr_un, sun_path) + 1 + strlen(sa.un.sun_path+1)) < 0) {
+
+                if (!IN_SET(errno, EPIPE, EAGAIN, ENOENT, ECONNREFUSED, ECONNRESET, ECONNABORTED))
+                        log_error_errno(errno, "connect() failed: %m");
+                return;
+        }
+		/*格式化传入的消息。U表示update，\002为分隔符，然后是消息长度和消息内容(实际为服务的名称)*/
+        if (asprintf(&message, "U\002%c%s%n", (int) (strlen(u->id) + 1), u->id, &n) < 0) {
+                log_oom();
+                return;
+        }
+
+        errno = 0;
+		/*向服务端写入消息，服务端通过epoll监控该消息*/
+        if (write(fd, message, n + 1) != n + 1)
+                if (!IN_SET(errno, EPIPE, EAGAIN, ENOENT, ECONNREFUSED, ECONNRESET, ECONNABORTED))
+                        log_error_errno(errno, "Failed to write Plymouth message: %m");
+	}
+
+## plymouth客户端
+
+如前面所述，开机动画中，除plymouthd服务端外，还有一个重要的客户端plymouth程序，路径在/usr/bin/plymouth.
+
+可以通过这个程序向plymouthd服务端发送请求，比如：如果需要服务端update进度信息，可以通过如下命令实现：
+
+plymouth update
+
+如果需要服务端退出，可以通过如下命令实现
+
+plymouth quit
+
+关于其具体实现，这里也不相信说明了，内容太多了，自己看代码最好。大致的逻辑为：
+
+创建相应的socket，connect服务端的socket，然后向其中write相应的请求数据即可，数据格式是服务端定义好的，具体见systemd客户端的相关内容。
+
+# 开机动画中的进度控制
+
+见过fedora的开机动画吗？是一个“灌水”的图标，水逐渐灌满后，启动完成，其实本质上就是一个进度条。
+
+但是，你了解这个“进度”具体是如何控制的吗？
+
+我们知道进度更新，是通过systemd客户端在启动完一个服务后，发送update请求实现的，但如何知道完成某个服务后，进度应该更新多少呢？如何知道进度到100%了呢？
+
+plymouth中的实现很简单，就是通过一个所谓的cache文件，就是一个文本文件，在fedora文件中，默认放置的路径为：
+
+	/var/lib/plymouth/boot-duration
+
+先看看这个文件的内容吧：
+	
+	[root@localhost systemd]# cat /var/lib/plymouth/boot-duration
+	0.001:sys-kernel-config.mount
+	0.038:plymouth-start.service
+	0.047:systemd-fsck@dev-mapper-cgsl\x2droot.service
+	0.050:dracut-initqueue.service
+	0.052:sysroot.mount
+	0.070:dracut-pre-pivot.service
+	0.204:systemd-readahead-collect.service
+	0.210:systemd-readahead-replay.service
+	0.228:kmod-static-nodes.service
+	0.246:systemd-sysctl.service
+	0.258:systemd-udev-trigger.service
+	0.277:systemd-journald.service
+	0.305:sys-kernel-debug.mount
+	0.305:dev-hugepages.mount
+	0.305:dev-mqueue.mount
+	0.305:tmp.mount
+	0.306:lvm2-lvmetad.service
+	0.321:systemd-fsck-root.service
+	0.339:systemd-remount-fs.service
+	0.342:systemd-tmpfiles-setup-dev.service
+	0.342:systemd-random-seed.service
+	0.343:lvm2-monitor.service
+	0.344:fedora-readonly.service
+	0.355:fedora-import-state.service
+	0.394:systemd-udevd.service
+	0.394:systemd-udev-settle.service
+	0.677:lvm2-pvscan@8:2.service
+	0.760:lvm2-pvscan@8:1.service
+	0.854:systemd-journal-flush.service
+	0.874:systemd-tmpfiles-setup.service
+	0.877:auditd.service
+	0.877:systemd-update-utmp.service
+	0.879:alsa-state.service
+	0.881:irqbalance.service
+	0.883:rngd.service
+	0.934:firewalld.service
+	0.934:avahi-daemon.service
+	0.934:rtkit-daemon.service
+	0.934:dbus.service
+	0.936:rsyslog.service
+	0.937:mcelog.service
+	0.939:livesys.service
+	0.941:chronyd.service
+	0.941:ModemManager.service
+	0.941:systemd-logind.service
+	0.941:abrtd.service
+	0.943:abrt-xorg.service
+	0.944:abrt-oops.service
+	0.946:abrt-ccpp.service
+	0.947:livesys-late.service
+	0.964:polkit.service
+	0.964:accounts-daemon.service
+	0.993:NetworkManager.service
+	0.997:sshd.service
+	0.997:systemd-user-sessions.service
+	0.998:crond.service
+	0.998:atd.service
+	0.999:xinetd.service
+
+看完这个，你可能一下就明白了，这个文件中记录了每个服务启动后，相应的进度信息，比如dracut-initqueue.service服务启动后的进度为5%，lvm2-pvscan@8:1.service服务启动的进度为76%。
+
+那这个文件内容又是从何而来的，其实是plymouthd自己写入的，根据每个服务的具体启动时间，每次系统启动时，plymouthd在更新进度的同时都会讲服务的启动时间信息转换为进度信息，更新到这个文件中，那么在下次启动时，就能根据新的信息来设置进度了。
+
+具体的实现代码还是不列了，自己看看吧。
+
+这里主要说明动画卡顿的问题，为什么我们见到的动画会卡顿，其实本质上，并不是卡顿，只是因为各个服务的启动时间不一致的问题，看看上面的文件，你就能明白，其中有些服务的启动时间很长，可能占到20%，或者更多，而有些时间很短，当某个服务启动时间过长时，如果使用动画，则会出现卡顿的假象，其实本质上并不是卡顿，根本不是驱动或是啥性能问题。
+
+所以，卡顿本质上不是问题，只能说明这里并不适合使用变化过大的动画，使用进度作为动画更合理。
+
+# systemd中与plymouth相关的服务
+
+systemd中与plymouth相关的服务有如下几个：
+
+	[root@localhost systemd]# ll /usr/lib/systemd/system/plymouth-*
+	-rw-r--r--. 1 root root 381 8月  17 2014 /usr/lib/systemd/system/plymouth-halt.service
+	-rw-r--r--. 1 root root 396 8月  17 2014 /usr/lib/systemd/system/plymouth-kexec.service
+	-rw-r--r--. 1 root root 393 8月  17 2014 /usr/lib/systemd/system/plymouth-poweroff.service
+	-rw-r--r--. 1 root root 235 8月  17 2014 /usr/lib/systemd/system/plymouth-quit.service
+	-rw-r--r--. 1 root root 243 8月  17 2014 /usr/lib/systemd/system/plymouth-quit-wait.service
+	-rw-r--r--. 1 root root 282 8月  17 2014 /usr/lib/systemd/system/plymouth-read-write.service
+	-rw-r--r--. 1 root root 349 5月  25 08:56 /usr/lib/systemd/system/plymouth-reboot.service
+	-rw-r--r--. 1 root root 691 8月  17 2014 /usr/lib/systemd/system/plymouth-start.service
+	-rw-r--r--. 1 root root 295 8月  17 2014 /usr/lib/systemd/system/plymouth-switch-root.service
+
+看看其中典型的书写格式：
+	
+	[root@localhost systemd]# cat /usr/lib/systemd/system/plymouth-start.service 
+	[Unit]
+	Description=Show Plymouth Boot Screen
+	DefaultDependencies=no
+	Wants=systemd-ask-password-plymouth.path systemd-vconsole-setup.service
+	After=systemd-vconsole-setup.service systemd-udev-trigger.service
+	Before=systemd-ask-password-plymouth.service
+	ConditionKernelCommandLine=!plymouth.enable=0
+	
+	[Service]
+	ExecStart=/usr/sbin/plymouthd --mode=boot --pid-file=/var/run/plymouth/pid --attach-to-session
+	ExecStartPost=-/usr/bin/udevadm settle --timeout=30 --exit-if-exists=/sys/class/drm/card0/dev ; -/usr/bin/udevadm settle --timeout=30 --exit-if-exists=/sys/class/graphics/fb0/dev ; -/usr/bin/plymouth show-splash
+	Type=forking
+	KillMode=none
+	SendSIGKILL=no
+	[Install]
+	WantedBy=sysinit.target
+
+关键点：
+
+1. 在ExecStart中启动plymouthd服务端，mode为boot
+2. 在ExecStartPost中使用plymouth服务端，发送show-splash请求，显示动画。
+
+
+
