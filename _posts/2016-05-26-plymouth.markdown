@@ -610,7 +610,8 @@ systemd向plymouthd发送update请求，plymouthd收到请求后进行处理，�
 	    ply_renderer_map_to_device
 	  	  map_to_device
 	  		ply_renderer_head_map
-			  backend->driver_interface->create_buffer 
+			  backend->driver_interface->create_buffer
+              backend->driver_interface->map_buffer 
 			  ply_renderer_head_redraw
 				flush_head
 				  ply_renderer_head_flush_area
