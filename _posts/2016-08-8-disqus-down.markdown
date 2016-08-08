@@ -3,7 +3,7 @@ layout: post
 title:  "Disqus down"
 date:   2016-08-08 23:17:02
 author: HappySeeker
-categories: Lift
+categories: Life
 ---
 
 # 又一堵墙
