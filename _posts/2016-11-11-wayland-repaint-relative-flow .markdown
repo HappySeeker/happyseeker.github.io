@@ -148,42 +148,7 @@ weston_load_module实现为：
     	output->base.assign_planes = drm_assign_planes;
     	output->base.set_dpms = drm_set_dpms;
     	output->base.switch_mode = drm_output_switch_mode;
-
-    	output->base.gamma_size = output->original_crtc->gamma_size;
-    	output->base.set_gamma = drm_output_set_gamma;
-
-    	output->base.subpixel = drm_subpixel_to_wayland(output->connector->subpixel);
-
-    	find_and_parse_output_edid(b, output, output->connector);
-    	if (output->connector->connector_type == DRM_MODE_CONNECTOR_LVDS)
-    		output->base.connection_internal = 1;
-
-    	weston_plane_init(&output->cursor_plane, b->compositor,
-    			  INT32_MIN, INT32_MIN);
-    	weston_plane_init(&output->fb_plane, b->compositor, 0, 0);
-
-    	weston_compositor_stack_plane(b->compositor, &output->cursor_plane, NULL);
-    	weston_compositor_stack_plane(b->compositor, &output->fb_plane,
-    				      &b->compositor->primary_plane);
-
-    	weston_log("Output %s, (connector %d, crtc %d)\n",
-    		   output->base.name, output->connector_id, output->crtc_id);
-    	wl_list_for_each(m, &output->base.mode_list, link)
-    		weston_log_continue(STAMP_SPACE "mode %dx%d@%.1f%s%s%s\n",
-    				    m->width, m->height, m->refresh / 1000.0,
-    				    m->flags & WL_OUTPUT_MODE_PREFERRED ?
-    				    ", preferred" : "",
-    				    m->flags & WL_OUTPUT_MODE_CURRENT ?
-    				    ", current" : "",
-    				    output->connector->count_modes == 0 ?
-    				    ", built-in" : "");
-
-    	return 0;
-
-    err_free:
-    	drmModeFreeProperty(output->dpms_prop);
-
-    	return -1;
+      ...
     }
 
 # 继续repaint流程
@@ -210,6 +175,17 @@ idle_repaints实现如下：
     idle_repaint(void *data)
     {
     	struct weston_output *output = data;
-      //调用在前面wayland_output_create初始化的接口，由于默认使用
+      //调用在前面wayland_output_create初始化的接口，由于默认使用drm_output_start_repaint_loop
     	output->start_repaint_loop(output);
     }
+
+drm_output_start_repaint_loop之后的主要流程如下：
+
+    drm_output_start_repaint_loop->
+      weston_output_finish_frame->
+        output_repaint_timer_handler->
+          weston_output_repaint->
+          output->repaint()-> // 这里的repaint为之前output初始化时初始化的drm_output_repaint
+            drm_output_repaint
+
+drm_output_repaint利用modsetting接口将绘制的内容最终显示到屏幕上，其机制还比较复杂，主要利用了pageflip、vblank和plane，相关原理与drm的API编程强相关，内容还比较多，这里就暂时不深入了，以后抽空单独写相关的文章来说明。
