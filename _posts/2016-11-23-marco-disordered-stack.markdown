@@ -13,6 +13,7 @@ categories: Graphic
 有个QT应用，界面是一个悬浮菜单，用于实现窗口切换。在使用过程中，偶尔会出现菜单无故消失的现象，而相关进程状态正常，无任何异常上报，只是界面消失了。
 
 # 分析
+
 ## 从现象开始
 
 进程状态正常，说明应用程序本身并无异常，问题应该出在界面显示部分，从现象来看，可以想象如下可能性：
@@ -41,9 +42,11 @@ categories: Graphic
 接下来需要解决两个问题：
 
 1. 如何获取存在窗口的ID？ Xlib中提供了接口XQueryTree()，可以查询以指定窗口为根窗口所有children窗口，意味着我们可以通过该接口获取系统中所有的窗口(以root窗口为根，进行查询)。但如何从这么多窗口中挑出自己需要的窗口呢？每个窗口都有自己的属性，比如Name，根据Name进行匹配就可以了，方法看起来有点笨，但实用即可。
+
 2. 如何显示指定窗口？简单，如前面所说，XMapWindow()即可，但在此之前，还需要将需要显示窗口raise到最前端，需要使用XMapWindow()。如此即可。
 
 解决上述两个问题后，可以直接根据窗口的名称来显示指定窗口。示例代码如下：
+
     #include <X11/Xlib.h>
     #include <X11/Xutil.h>
     #include <X11/Xatom.h>
@@ -184,6 +187,7 @@ categories: Graphic
 通过上诉命令显示消失的窗口，结果显示成功，说明窗口和Xorg本身并没有问题，那问题应该就在窗口管理器Marco上了。
 
 ## Marco相关分析
+
 ### 窗口Stack
 
 窗口Stack，即窗口叠放的层次关系，在同一个图形界面环境中，有许多的应用程序可用一起打开，每个应用程序可能会有多个窗口，不可能让每个窗口都显示到独立的区域，所有的窗口都共享同一个桌面空间，那么必然会有窗口叠放顺序的问题，谁在前，谁在后。显然，放在前面(Above)的窗口必然会遮挡后面(Below)的窗口。这种顺序也称Z序。
@@ -278,8 +282,10 @@ QT 5.3中该属性设置，相关代码如下：
 
 这里有几个关键点：
 
-1. 具有Override属性的窗口，对于QT来说，就是设置了BypassWindowManagerHint|FramelessWindowHint的窗口。
+1. 具有Override属性的窗口，对于QT来说，就是设置了"BypassWindowManagerHint|FramelessWindowHint"的窗口。
+
 2. 用户可见的窗口，即经过Map(XMapWindow)操作的窗口。
+
 3. 新窗口，即新创建的窗口，这是从Marco的角度看的。通常来说应用程序使用XCreateWindow之类的Xlib接口创建窗口，这个操作由Xorg负责完成，Marco不参与，那Marco如何知道有新窗口创建呢？实际上，marco只监听从Xorg发送过来的事件，由专门的事件循环处理(event_callbak),用户创建窗口时不发送事件，但在Map窗口时，Xorg会向marco发送事件，此时marco会进行相应处理，管理Stack主要在这个流程中进行，后面单独介绍。
 
 按此机制，可以保证最有的Override窗口一直保持在最前面，不会被覆盖。
@@ -332,7 +338,14 @@ Marco中调整Stack顺序的主要代码流程如下：
                * to be moved below.
                */
             }
-          // 查找自己维护的hash表，该hash表中包含了所有的maped且非Override的窗口，该表的维护机制后面说明。如果找到，说明这个child就是我们插入的参考了，由于是从上到下依次轮询，最先查到的必然就是当前显示在最前面的窗口了。另一方面，由于Override窗口并未加入到hash表中，所以Override窗口永远不会作为参考，也就是说，新加入的窗口的插入位置永远不会超过Override窗口的位置。
+          /*
+           * 查找自己维护的hash表，该hash表中包含了所有的maped且非Override的窗口
+           * ，该表的维护机制后面说明。如果找到，说明这个child就是我们插入的参考了
+           * ，由于是从上到下依次轮询，最先查到的必然就是当前显示在最前面的窗口了。
+           * 另一方面，由于Override窗口并未加入到hash表中，所以Override窗口永远
+           * 不会作为参考，也就是说，新加入的窗口的插入位置永远不会超过Override窗
+           * 口的位置。
+           */
           else if (meta_display_lookup_x_window (screen->display,
                                                  children[i]) != NULL)
             {
@@ -347,7 +360,10 @@ Marco中调整Stack顺序的主要代码流程如下：
               changes.stack_mode = Above;
 
               meta_error_trap_push (screen->display);
-              // 向Xorg发送请求，调整Stack顺序，参考该child当前的位置，将新窗口放到该child前面，具体实现请看Xorg中的ConfigureWindow函数
+              /*
+               * 向Xorg发送请求，调整Stack顺序，参考该child当前的位置，将新窗口
+               * 放到该child前面，具体实现请看Xorg中的ConfigureWindow函数
+               */
               XConfigureWindow (screen->display->xdisplay,
                                 xwindow,
                                 CWSibling | CWStackMode,
@@ -366,7 +382,11 @@ Marco中调整Stack顺序的主要代码流程如下：
 
 前面提到，Marco自己维护的窗口Hash表对于Stack的维护至关重要，那这个Hash是如何维护的呢？
 
-主要原则为：只有maped(对用户可见的)、而且是××非××Override窗口才能加入到该列表中。换句话说，窗口管理器只管理用户可见的需要自己管理的(设置BypassWindowManagerHint属性的窗口显然就是不需要被管理)窗口。相关主要代码流程如下：
+主要原则为：
+
+    只有maped(对用户可见的)、而且是××非××Override窗口才能加入到该列表中。
+
+换句话说，窗口管理器只管理用户可见的需要自己管理的(设置BypassWindowManagerHint属性的窗口显然就是不需要被管理)窗口。相关主要代码流程如下：
 
     event_callback
       meta_window_new  //创建Marco端的窗口数据结构
@@ -397,7 +417,9 @@ Marco中调整Stack顺序的主要代码流程如下：
 看起来好像没有问题，理应运转正常，但问题确实出现了。
 
 ## 故障发生
+
 ### user_time & user_time_window
+
 凡是总有例外，这个例外就是由于Xorg环境中加入的user_time属性，该属性的目的是增加桌面系统的易用性，假设这样一种场景：
 
     程序员正在终端或者IDE窗口中编写代码，突然来了个弹出窗口，
@@ -529,6 +551,7 @@ Marco在感知到_NET_WM_USER_TIME_WINDOW属性被修改后，会进入上述rel
         1X1 Win
         Override Win
         Normal Win
+
 Override窗口被覆盖了！
 
 如果不是设置1X1窗口为user_time_window，这种情况下，Override窗口不会被覆盖(正常过程)，过程描述如下：
@@ -544,7 +567,8 @@ Override窗口被覆盖了！
         Override Win
         full-screen Win
         Wine Win
-        Normal Win      
+        Normal Win    
+
 如此，Override窗口永远不会被覆盖。
 
 # 问题总结
@@ -552,7 +576,9 @@ Override窗口被覆盖了！
 问题看似多方面的问题：
 
 - 不用user_time就不会有问题
+
 - 不设置unmaped的窗口为user_time_window也不会有问题
+
 - marco能正确处理unmaped的窗口为user_time_window也不会有问题
 
 # 解决
