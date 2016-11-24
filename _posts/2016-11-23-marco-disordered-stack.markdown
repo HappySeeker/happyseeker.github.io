@@ -282,7 +282,7 @@ QT 5.3中该属性设置，相关代码如下：
 
 这里有几个关键点：
 
-1. 具有Override属性的窗口，对于QT来说，就是设置了"BypassWindowManagerHint|FramelessWindowHint"的窗口。
+1. 具有Override属性的窗口，对于QT来说，就是设置了BypassWindowManagerHint和FramelessWindowHint的窗口。
 
 2. 用户可见的窗口，即经过Map(XMapWindow)操作的窗口。
 
