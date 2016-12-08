@@ -27,7 +27,7 @@ categories: Graphic
 
 问题在于对键盘按键的处理，键盘事件处理相关逻辑对应内核来说，属于Input子系统。对Input子系统的架构进行简化后的效果图如下所示：
 
-![Input子系统架构](./Input arch.png)
+![Input子系统架构](https://github.com/HappySeeker/happyseeker.github.io/raw/master/_posts/Input arch.png)
 
 可见，Input子系统分为3个层次：
 
