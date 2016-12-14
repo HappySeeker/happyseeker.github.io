@@ -91,12 +91,6 @@ level 2 cache would be the point of unification in a system with Harvard level 1
 caches and a TLB for cacheing translation table entries. If no external cache is
 present, main memory would be the Point of unification.
 
-
-
-
-
-
-
 ARM64中包含如下几种类型的异常：
 
 1. 中断(Interrupts)，就是我们平常理解的中断，主要由外设触发，是典型的异步异常。 ARM64中主要包括两种类型的中断：IRQ(普通中断)和FIQ(高优先级中断，处理更快)。 Linux内核中好像没有使用FIQ，还没有仔细看代码，具体不详述了。
@@ -145,28 +139,28 @@ Linux内核中，中断向量表实现在entry.S文件中，代码如下：
 		/*
 		 * Exception vectors.
 		 */
-		
+
 			.align	11
 		/*el1代表内核态，el0代表用户态*/
 		ENTRY(vectors)
-			ventry	el1_sync_invalid		// Synchronous EL1t 
+			ventry	el1_sync_invalid		// Synchronous EL1t
 			ventry	el1_irq_invalid			// IRQ EL1t
 			ventry	el1_fiq_invalid			// FIQ EL1t
 			/*内核态System Error ，使用SP_EL0(用户态栈)*/
 			ventry	el1_error_invalid		// Error EL1t
-		
+
 			ventry	el1_sync			// Synchronous EL1h
 			ventry	el1_irq				// IRQ EL1h
 			ventry	el1_fiq_invalid			// FIQ EL1h
 			/*内核态System Error ，使用SP_EL1(内核态栈)*/
 			ventry	el1_error_invalid		// Error EL1h
-		
+
 			ventry	el0_sync			// Synchronous 64-bit EL0
 			ventry	el0_irq				// IRQ 64-bit EL0
 			ventry	el0_fiq_invalid			// FIQ 64-bit EL0
 			/*用户态System Error ，使用SP_EL1(内核态栈)*/
 			ventry	el0_error_invalid		// Error 64-bit EL0
-		
+
 		#ifdef CONFIG_COMPAT
 			ventry	el0_sync_compat			// Synchronous 32-bit EL0
 			ventry	el0_irq_compat			// IRQ 32-bit EL0
@@ -181,7 +175,7 @@ Linux内核中，中断向量表实现在entry.S文件中，代码如下：
 		END(vectors)
 
 
-可以明显看出分组和分类的情况。 
+可以明显看出分组和分类的情况。
 
 ## invalid类处理
 带invalid后缀的向量都是Linux做未做进一步处理的向量，默认都会进入bad_mode()流程，说明这类异常Linux内核无法处理，只能上报给用户进程(用户态，sigkill或sigbus信号)或die(内核态)
@@ -300,7 +294,7 @@ el0_sync处理类似，主要区别在于：其涉及用户态和内核态的上
 		/*退出用户上下文*/
 		ct_user_exit
 		irq_handler
-	
+
 	#ifdef CONFIG_TRACE_IRQFLAGS
 		bl	trace_hardirqs_on
 	#endif
