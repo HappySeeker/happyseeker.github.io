@@ -200,7 +200,7 @@ Xorg自身并不管理窗口的Z序(但其持有最终的窗口Stack)，其只�
 
 那么如何查看窗口Stack呢？
 
-通过上一节提到的XQueryTree接口，可以查询root窗口所有的children窗口列表，这个列表，本质上就是窗口Stack，只是顺序刚好想法，最后一个child位于列表的最后，所以，利用上一节的代码，即可查询到窗口Stack。
+通过上一节提到的XQueryTree接口，可以查询root窗口所有的children窗口列表，这个列表，本质上就是窗口Stack，只是顺序刚好相反最后一个child位于列表的最后，所以，利用上一节的代码，即可查询到窗口Stack。
 
 但是，其实，还有更简单的方法，有一套shell命令，可以查看窗口的各种详细信息，他们属于xorg-x11-utils软件包，安装即可使用。
 
@@ -305,7 +305,7 @@ Marco中调整Stack顺序的主要代码流程如下：
           meta_stack_add //将新窗口加入自己的Stack中
             stack_sync_to_server //同步自己的Stack和Xorg的Stack
               raise_window_relative_to_managed_windows//会进行上述所说动作:
-                                                        将新窗口插入插入合
+                                                        将新窗口插入合
                                                         适的位置
 
 整个流程比较复杂，我们只关注关键的部分raise_window_relative_to_managed_windows函数进行了实际的Stack调整操作：
@@ -494,13 +494,13 @@ Marco中调整Stack顺序的主要代码流程如下：
         }
     }
 
-代码足够简单。但这里有个问题，其加入hash表(注册)时，没有判断该窗口是否为maped，就是说unmaped的窗口也可能会被加入hash表中，看起来与该hash表设计的初衷不太相符，注册前的一大段注释也说明作者也有这方面的疑虑，但作者比较任性，don't care，因为没有明文规定。正是这里导致了我们遇到的问题。
+代码足够简单。但这里有个问题，其加入hash表(注册)时，没有判断该窗口是否为mapped，就是说unmapped的窗口也可能会被加入hash表中，看起来与该hash表设计的初衷不太相符，注册前的一大段注释也说明作者也有这方面的疑虑，但作者比较任性，don't care，因为没有明文规定。正是这里导致了我们遇到的问题。
 
 ### 问题来了
 
 前面所说，由应用程序自己设置user_time_window，如果设置为toplevel window，一切OK，因为toplevel window必然会map。
 
-但有些应用程序偏僻不这么干(具体原因没有去深究)，比如Wine，其创建一个1X1的假窗口来作为user_time_window，而且该窗口并未被map，相关代码流程如下：
+但有些应用程序偏偏不这么干(具体原因没有去深究)，比如Wine，其创建一个1X1的假窗口来作为user_time_window，而且该窗口并未被map，相关代码流程如下：
 
     create_whole_window
       set_initial_wm_hints
