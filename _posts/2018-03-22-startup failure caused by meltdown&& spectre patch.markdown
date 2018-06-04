@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Meltdown && Spectre漏洞补丁-启动失败"
-date:   2018-03-022 06:45:51
+date:   2018-03-22 06:45:51
 author: JiangBiao
 categories: Kernel
 ---
@@ -21,13 +21,13 @@ Author: Thomas Gleixner <tglx@linutronix.de>
 Date:   Mon Dec 4 15:07:30 2017 +0100
 
     x86/paravirt: Dont patch flush_tlb_single
-    
+
     native_flush_tlb_single() will be changed with the upcoming
     PAGE_TABLE_ISOLATION feature. This requires to have more code in
     there than INVLPG.
-    
+
     Remove the paravirt patching for it
-    
+
     diff --git a/arch/x86/kernel/paravirt_patch_64.c b/arch/x86/kernel/paravirt_patch_64.c
 index ac0be82..9edadab 100644
 --- a/arch/x86/kernel/paravirt_patch_64.c
@@ -38,7 +38,7 @@ index ac0be82..9edadab 100644
  DEF_NATIVE(pv_mmu_ops, write_cr3, "movq %rdi, %cr3");
 -DEF_NATIVE(pv_mmu_ops, flush_tlb_single, "invlpg (%rdi)");
  DEF_NATIVE(pv_cpu_ops, wbinvd, "wbinvd");
- 
+
  DEF_NATIVE(pv_cpu_ops, usergs_sysret64, "swapgs; sysretq");
 @@ -60,7 +59,6 @@ unsigned native_patch(u8 type, u16 clobbers, void *ibuf,
                 PATCH_SITE(pv_mmu_ops, read_cr2);
@@ -75,7 +75,7 @@ index ac0be82..9edadab 100644
 		 * kernel address space and for its usermode counterpart, but it does
 		 * not flush it for other address spaces.
 		 */
-		/* 
+		/*
 		  * flush user地址空间的某addr对应的TLB entry
 		  * 当pti off时，只是简单的INVLPG
 		  */
@@ -113,7 +113,7 @@ index ac0be82..9edadab 100644
 		 */
 		if (!this_cpu_has(X86_FEATURE_INVPCID_SINGLE))
 			invalidate_user_asid(loaded_mm_asid);
-		else 
+		else
 			invpcid_flush_one(user_pcid(loaded_mm_asid), addr);
 	}
 
