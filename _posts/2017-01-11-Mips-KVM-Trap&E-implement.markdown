@@ -30,7 +30,7 @@ Guest OS做访存操作时有如下几中情况发生：
    - VMM先遍历Guest TLB，如果找到相应条目，则将Guest TLB中翻译后的GPA转换为HPA，然后填入Shadow Host TLB(硬件TLB)，并返回Guest OS继续运行。
    - 如果Guest TLB中没有找到，则向Guest OS中注入TLB Load/Store异常(由Guest OS负责重填Guest TLB)，然后填入Shadow Host TLB(硬件TLB)，并返回Guest OS继续运行。
     - 当Guest得到调度运行时，TLB Load/Store异常(General异常)入口，最终会进入page fault相关流程，完成Guest TLB重填。
-    - 重填TLB时，会调用类似TLBWR之类的之令，此时会再次触发VM-Exit，VMM通过捕获该异常，其中填入虚拟的Guest TLB、flust相应的Shadow Host TLB条目，然后返回Guest OS继续执行。
+    - 重填TLB时，会调用类似TLBWR之类的指令，此时会再次触发VM-Exit，VMM通过捕获该异常，其中填入虚拟的Guest TLB、flush相应的Shadow Host TLB条目，然后返回Guest OS继续执行。
 
 # 代码实现
 

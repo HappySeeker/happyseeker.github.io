@@ -1,0 +1,424 @@
+---
+layout: post
+title:  "PTI(page table isolation)--代码分析"
+date:   2018-04-18 17:03:24
+author: JiangBiao
+categories: Kernel
+---
+
+#  背景
+
+本文接着前一篇(原理及性能损耗)继续分析PTI的实际代码，其实比较简单，供大家和自己后续参考。
+
+# 代码分析
+
+PTI功能的代码相对比较独立，看似跟内核中的mm基础架构紧密相关，但实际对mm的基础代码改动较少，耦合度较低，这也是其设计的美妙之处。
+
+在kernel master分支代码中，主要涉及如下两个补丁：
+
+aa8c6248f8c75acfd610fe15d8cae23cf70d9d09：
+
+	commit aa8c6248f8c75acfd610fe15d8cae23cf70d9d09
+	Author: Thomas Gleixner <tglx@linutronix.de>
+	Date:   Mon Dec 4 15:07:36 2017 +0100
+	
+	    x86/mm/pti: Add infrastructure for page table isolation
+	    
+	    Add the initial files for kernel page table isolation, with a minimal init
+	    function and the boot time detection for this misfeature.
+
+8a09317b895f073977346779df52f67c1056d81d：
+
+	commit 8a09317b895f073977346779df52f67c1056d81d
+	Author: Dave Hansen <dave.hansen@linux.intel.com>
+	Date:   Mon Dec 4 15:07:35 2017 +0100
+	
+	    x86/mm/pti: Prepare the x86/entry assembly code for entry/exit CR3 switching
+	    
+	    PAGE_TABLE_ISOLATION needs to switch to a different CR3 value when it
+	    enters the kernel and switch back when it exits.  This essentially needs to
+	    be done before leaving assembly code.
+	    
+	    This is extra challenging because the switching context is tricky: the
+	    registers that can be clobbered can vary.  It is also hard to store things
+	    on the stack because there is an established ABI (ptregs) or the stack is
+	    entirely unsafe to use.
+	    
+	    Establish a set of macros that allow changing to the user and kernel CR3
+	    values.
+	    
+	    Interactions with SWAPGS:
+	    
+	      Previous versions of the PAGE_TABLE_ISOLATION code relied on having
+	      per-CPU scratch space to save/restore a register that can be used for the
+	      CR3 MOV.  The %GS register is used to index into our per-CPU space, so
+	      SWAPGS *had* to be done before the CR3 switch.  That scratch space is gone
+	      now, but the semantic that SWAPGS must be done before the CR3 MOV is
+	      retained.  This is good to keep because it is not that hard to do and it
+	      allows to do things like add per-CPU debugging information.
+	    
+	    What this does in the NMI code is worth pointing out.  NMIs can interrupt
+	    *any* context and they can also be nested with NMIs interrupting other
+	    NMIs.  The comments below ".Lnmi_from_kernel" explain the format of the
+	    stack during this situation.  Changing the format of this stack is hard.
+	     Instead of storing the old CR3 value on the stack, this depends on the
+	    *regular* register save/restore mechanism and then uses %r14 to keep CR3
+	    during the NMI.  It is callee-saved and will not be clobbered by the C NMI
+	    handlers that get called.
+
+commit log中的描述写的比较清楚，大家可以仔细理解下。
+
+如果想看这两个补丁的相信情况，可以在git仓库中之间执行如下两个命令查看即可：
+
+	#git log -p aa8c6248f8c75acfd610fe15d8cae23cf70d9d09
+	#git log -p 8a09317b895f073977346779df52f67c1056d81d
+
+总体来看，这两个补丁主要修改了如下文件：
+
+1. Documentation/admin-guide/kernel-parameters.txt //添加启动参数说明
+2. arch/x86/entry/calling.h //页表切换相关汇编代码
+3. arch/x86/entry/entry_64.S&entry_64_compat.S //用户态和内核态切换时添加页表切换相关操作
+3. arch/x86/include/asm/pti.h //新增。pti相关接口、宏定义
+4. arch/x86/mm/init.c //内核初始化时，检查pti相关的启动参数
+5. arch/x86/mm/pti.c //新增。Pti初始化、参数检查等基本功能
+6. init/main.c //初始化pti
+
+接下来逐个分析相关文件的修改。
+
+## kernel-parameters.txt
+
+该文件中的修改如下：
+
+	+       nopti           [X86-64] Disable kernel page table isolation
+	+
+	
+很简单，只是添加了启动参数nopti的说明，用于关闭pti功能。
+
+## calling.h
+
+两个补丁都对这个文件进行了修改，主要是添加了页表切换相关汇编代码，供用户态/内核态切换时调用。
+
+第一个补丁的修改如下：
+
+	diff --git a/arch/x86/entry/calling.h b/arch/x86/entry/calling.h
+	index 3fd8bc5..a9d17a7 100644
+	--- a/arch/x86/entry/calling.h
+	+++ b/arch/x86/entry/calling.h
+	@@ -1,6 +1,8 @@
+	 /* SPDX-License-Identifier: GPL-2.0 */
+	 #include <linux/jump_label.h>
+	 #include <asm/unwind_hints.h>
+	+#include <asm/cpufeatures.h>
+	+#include <asm/page_types.h>
+	 
+	 /*
+	 
+	@@ -187,6 +189,70 @@ For 32-bit we have the following conventions - kernel is built with
+	 #endif
+	 .endm
+	 
+	+#ifdef CONFIG_PAGE_TABLE_ISOLATION
+	+/* 
+	    * CR3中的第13位(bit 12)用于切换内核态和用户态页表，当该位clear时，表示使用内核页表
+	    * 当该位set时，表示使用用户页表，也就是说用户态和内核态的PGD时相邻的两页。
+	    */
+	+/* PAGE_TABLE_ISOLATION PGDs are 8k.  Flip bit 12 to switch between the two halves: */
+	+#define PTI_SWITCH_MASK (1<<PAGE_SHIFT)
+	+/*调整内核的CR3寄存器内容，在进入内核态时使用，本质为clear第13位，将页表切换为内核页表*/
+	+.macro ADJUST_KERNEL_CR3 reg:req
+	+       /* Clear "PAGE_TABLE_ISOLATION bit", point CR3 at kernel pagetables: */
+	+       andq    $(~PTI_SWITCH_MASK), \reg
+	+.endm
+	+/*与上面类似，本质为set 13位，将页表切换为用户页表*/
+	+.macro ADJUST_USER_CR3 reg:req
+	+       /* Move CR3 up a page to the user page tables: */
+	+       orq     $(PTI_SWITCH_MASK), \reg
+	+.endm
+	+/*切换到内核的CR3,进入内核态时调用，通过调用ADJUST_KERNEL_CR3实现，最后将修改后内容写入CR3，实现页表切换*/
+	+.macro SWITCH_TO_KERNEL_CR3 scratch_reg:req
+	+       mov     %cr3, \scratch_reg
+	+       ADJUST_KERNEL_CR3 \scratch_reg
+	+       mov     \scratch_reg, %cr3
+	+.endm
+	+/*与上面类似，切换到用户态的CR3*/
+	+.macro SWITCH_TO_USER_CR3 scratch_reg:req
+	+       mov     %cr3, \scratch_reg
+	+       ADJUST_USER_CR3 \scratch_reg
+	+       mov     \scratch_reg, %cr3
+	+.endm
+	+/*与SWITCH_TO_KERNEL_CR3类似，只是先保存了CR3*/
+	+.macro SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg:req save_reg:req
+	+       movq    %cr3, \scratch_reg
+	+       movq    \scratch_reg, \save_reg
+	+       /*
+	+        * Is the switch bit zero?  This means the address is
+	+        * up in real PAGE_TABLE_ISOLATION patches in a moment.
+	+        */
+	+       testq   $(PTI_SWITCH_MASK), \scratch_reg
+	+       jz      .Ldone_\@
+	+
+	+       ADJUST_KERNEL_CR3 \scratch_reg
+	+       movq    \scratch_reg, %cr3
+	+
+	+.Ldone_\@:
+	+.endm
+	+/*通过前面保存的CR3内容，恢复CR3*/
+	+.macro RESTORE_CR3 save_reg:req
+	+       /*
+	+        * The CR3 write could be avoided when not changing its value,
+	+        * but would require a CR3 read *and* a scratch register.
+	+        */
+	+       movq    \save_reg, %cr3
+	+.endm
+	+
+	+#else /* CONFIG_PAGE_TABLE_ISOLATION=n: */
+	+
+	+.macro SWITCH_TO_KERNEL_CR3 scratch_reg:req
+	+.endm
+	+.macro SWITCH_TO_USER_CR3 scratch_reg:req
+	+.endm
+	+.macro SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg:req save_reg:req
+	+.endm
+	+.macro RESTORE_CR3 save_reg:req
+	+.endm
+	+
+	+#endif
+	+
+
+第二个补丁对该文件进行了优化，主要添加了开关(X86_FEATURE_PTI)，用于控制是否走pti相关流程。
+
+diff --git a/arch/x86/entry/calling.h b/arch/x86/entry/calling.h
+index a9d17a7..3d3389a 100644
+--- a/arch/x86/entry/calling.h
++++ b/arch/x86/entry/calling.h
+@@ -205,18 +205,23 @@ For 32-bit we have the following conventions - kernel is built with
+ .endm
+ 
+ .macro SWITCH_TO_KERNEL_CR3 scratch_reg:req
++       ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
+        mov     %cr3, \scratch_reg
+        ADJUST_KERNEL_CR3 \scratch_reg
+        mov     \scratch_reg, %cr3
++.Lend_\@:
+ .endm
+ 
+ .macro SWITCH_TO_USER_CR3 scratch_reg:req
++       ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
+        mov     %cr3, \scratch_reg
+        ADJUST_USER_CR3 \scratch_reg
+        mov     \scratch_reg, %cr3
++.Lend_\@:
+ .endm
+ 
+ .macro SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg:req save_reg:req
++       ALTERNATIVE "jmp .Ldone_\@", "", X86_FEATURE_PTI
+        movq    %cr3, \scratch_reg
+        movq    \scratch_reg, \save_reg
+        /*
+@@ -233,11 +238,13 @@ For 32-bit we have the following conventions - kernel is built with
+ .endm
+ 
+ .macro RESTORE_CR3 save_reg:req
++       ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
+        /*
+         * The CR3 write could be avoided when not changing its value,
+         * but would require a CR3 read *and* a scratch register.
+         */
+        movq    \save_reg, %cr3
++.Lend_\@:
+ .endm
+
+代码比较简单，就不解释了。
+
+## entry_64.S
+
+这部分代码用于在用户态和内核态切换时添加页表切换相关操作。
+
+	diff --git a/arch/x86/entry/entry_64.S b/arch/x86/entry/entry_64.S
+	index 87cebe7..2ad7ad4 100644
+	--- a/arch/x86/entry/entry_64.S
+	+++ b/arch/x86/entry/entry_64.S
+	@@ -164,6 +164,9 @@ ENTRY(entry_SYSCALL_64_trampoline)
+		/* Stash the user RSP. */
+		movq    %rsp, RSP_SCRATCH
+	 /* 
+	  *系统调用入口处，添加页表切换操作，需要切换到内核页表，具体切换动作定义在calling.h中
+	  *注意，这是trampoline流程，不是常规的系统调用入口流程，原因是使用PTI后，就不走常规
+	  *流程了，为了减少内核地址映射，见我的前一篇关于PTI原理的文章。
+	  */
+	+       /* Note: using %rsp as a scratch reg. */
+	+       SWITCH_TO_KERNEL_CR3 scratch_reg=%rsp
+	+
+		/* Load the top of the task stack into RSP */
+		movq    CPU_ENTRY_AREA_tss + TSS_sp1 + CPU_ENTRY_AREA, %rsp
+	 
+	@@ -203,6 +206,10 @@ ENTRY(entry_SYSCALL_64)
+		 */
+	 
+		swapgs
+		/* 使用PTI后，就不走常规流程了，为了减少内核地址映射，见我的前一篇关于PTI原理的文章  */
+	+       /*
+	+        * This path is not taken when PAGE_TABLE_ISOLATION is disabled so it
+	+        * is not required to switch CR3.
+	+        */
+		movq    %rsp, PER_CPU_VAR(rsp_scratch)
+		movq    PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+	 
+	@@ -399,6 +406,7 @@ syscall_return_via_sysret:
+		 * We are on the trampoline stack.  All regs except RDI are live.
+		 * We can do future final exit work right here.
+		 */
+		 /*系统调用返回，此时需要切换到用户页表*/
+	+       SWITCH_TO_USER_CR3 scratch_reg=%rdi
+	 
+		popq    %rdi
+		popq    %rsp
+	@@ -736,6 +744,8 @@ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
+		 * We can do future final exit work right here.
+		 */
+	 	/*中断返回用户态，需要切换到用户页表*/
+	+       SWITCH_TO_USER_CR3 scratch_reg=%rdi
+	+
+		/* Restore RDI. */
+		popq    %rdi
+		SWAPGS
+	@@ -818,7 +828,9 @@ native_irq_return_ldt:
+		 */
+	 
+		pushq   %rdi                            /* Stash user RDI */
+	-       SWAPGS
+	/*中断返回内核态，需要切换到kernel GS和内核页表*/
+	+       SWAPGS                                  /* to kernel GS */
+	+       SWITCH_TO_KERNEL_CR3 scratch_reg=%rdi   /* to kernel CR3 */
+	+
+	...
+	ENTRY(nmi)
+		UNWIND_HINT_IRET_REGS
+	@@ -1446,6 +1476,7 @@ ENTRY(nmi)
+	 
+		swapgs
+		cld
+		/*nmi中断入口，需要切换到内核页表*/
+	+       SWITCH_TO_KERNEL_CR3 scratch_reg=%rdx
+		movq    %rsp, %rdx
+		movq    PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+		UNWIND_HINT_IRET_REGS base=%rdx offset=8
+	@@ -1698,6 +1729,8 @@ end_repeat_nmi:
+		movq    $-1, %rsi
+		call    do_nmi
+	...
+	
+## pti.h
+
+	diff --git a/arch/x86/include/asm/pti.h b/arch/x86/include/asm/pti.h
+	new file mode 100644
+	index 0000000..0b5ef05
+	--- /dev/null
+	+++ b/arch/x86/include/asm/pti.h
+	@@ -0,0 +1,14 @@
+	+// SPDX-License-Identifier: GPL-2.0
+	+#ifndef _ASM_X86_PTI_H
+	+#define _ASM_X86_PTI_H
+	+#ifndef __ASSEMBLY__
+	+
+	+#ifdef CONFIG_PAGE_TABLE_ISOLATION
+	+extern void pti_init(void);
+	+extern void pti_check_boottime_disable(void);
+	+#else
+	+static inline void pti_check_boottime_disable(void) { }
+	+#endif
+	+
+	+#endif /* __ASSEMBLY__ */
+	+#endif /* _ASM_X86_PTI_H */
+	
+一些函数声明，不解释了
+
+## pti.c
+
+Pti初始化、参数检查等基本功能：
+
+	+#undef pr_fmt
+	+#define pr_fmt(fmt)     "Kernel/User page tables isolation: " fmt
+	+// 打印警告信息
+	+static void __init pti_print_if_insecure(const char *reason)
+	+{
+	+       if (boot_cpu_has_bug(X86_BUG_CPU_INSECURE))
+	+               pr_info("%s\n", reason);
+	+}
+	+//检查内核启动参数
+	+void __init pti_check_boottime_disable(void)
+	+{
+	+       if (hypervisor_is_type(X86_HYPER_XEN_PV)) {
+	+               pti_print_if_insecure("disabled on XEN PV.");
+	+               return;
+	+       }
+	+
+	+       if (cmdline_find_option_bool(boot_command_line, "nopti")) {
+	+               pti_print_if_insecure("disabled on command line.");
+	+               return;
+	+       }
+	+
+	+       if (!boot_cpu_has_bug(X86_BUG_CPU_INSECURE))
+	+               return;
+	+
+	+       setup_force_cpu_cap(X86_FEATURE_PTI);
+	+}
+	+
+	+/*
+	+ * Initialize kernel page table isolation
+	+ */
+	//pti初始化
+	+void __init pti_init(void)
+	+{
+	+       if (!static_cpu_has(X86_FEATURE_PTI))
+	+               return;
+	+
+	+       pr_info("enabled\n");
+	+}
+
+代码依然很简单，不解释了。后续针对pti功能提交了很多的修复、优化补丁，最新版本中的pti.c文件比这个复杂很多，大家可以自己去看看，也可以通过如下的命令追踪该文件的修改历史：
+
+	#git log -p arch/x86/mm/pti.c
+	
+本文主要针对pti的基本代码，所以，就不深入了。
+
+## init.c
+
+	+#include <asm/pti.h>
+	 
+	 /*
+	  * We need to define the tracepoints somewhere, and tlb.c
+	@@ -630,6 +631,7 @@ void __init init_mem_mapping(void)
+	 {
+		unsigned long end;
+	 //在内核初始化阶段，检查kernel启动参数。
+	+       pti_check_boottime_disable();
+		probe_page_size_mask();
+		setup_pcid();
+		
+## main.c
+
+diff --git a/init/main.c b/init/main.c
+index 8a390f6..b32ec72 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -75,6 +75,7 @@
+ #include <linux/slab.h>
+ #include <linux/perf_event.h>
+ #include <linux/ptrace.h>
++#include <linux/pti.h>
+ #include <linux/blkdev.h>
+ #include <linux/elevator.h>
+ #include <linux/sched_clock.h>
+@@ -506,6 +507,8 @@ static void __init mm_init(void)
+        ioremap_huge_init();
+        /* Should be run before the first non-init thread is created */
+        init_espfix_bsp();
+        //pti初始化
++       /* Should be run after espfix64 is set up. */
++       pti_init();
+ }
+ 
+ 不解释了。
+ 
+ 总体看，Pti的代码非常简单直接，后续有较多的修复、优化，也不复杂，留作大家自己学习。

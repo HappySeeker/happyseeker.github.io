@@ -13,7 +13,7 @@ categories: Graphic
 在内核启动参数中加上调试信息开关：plymouth:debug，查看plymouth的日志，发现日志中有如下报错：
 
 	[ply-boot-splash.c]                          ply_boot_splash_show:showing splash screen
-	
+
 	[./plugin.c]                            show_splash_screen:loading lock image
 	[./plugin.c]                            show_splash_screen:loading box image
 	[./plugin.c]                            show_splash_screen:loading corner image
@@ -73,7 +73,7 @@ categories: Graphic
 	1353         unsigned long mmio_pgoff;
 	1354         unsigned long start;
 	1355         u32 len;
-	1356 
+	1356
 	1357         if (!info)
 	1358                 return -ENODEV;
 	1359         fb = info->fbops;
@@ -91,7 +91,7 @@ categories: Graphic
 	1366                 mutex_unlock(&info->mm_lock);
 	1367                 return res;
 	1368         }
-	1369 
+	1369
 	1370         /*
 	1371          * Ugh. This can be either the frame buffer mapping, or
 	1372          * if pgoff points past it, the mmio mapping.
@@ -105,10 +105,10 @@ categories: Graphic
 	1380                 len = info->fix.mmio_len;
 	1381         }
 	1382         mutex_unlock(&info->mm_lock);
-	1383 
+	1383
 	1384         vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	1385         fb_pgprotect(file, vma, start);
-	1386 
+	1386
 	1387         return vm_iomap_memory(vma, start, len);
 	1388 }
 
@@ -125,7 +125,7 @@ categories: Graphic
 	[    5.380528] plymouthd:129 conflicting memory types 7f800000-7ffe9000 write-combining<->uncached-minus
 	[    5.380540] reserve_memtype failed 0x7f800000-0x7ffe9000, track uncached-minus, req uncached-minus
 	[    5.400345] plymouthd:129 conflicting memory types 7f800000-7ffe9000 write-combining<->uncached-minus
-	[    5.400353] reserve_memtype failed 0x7f800000-0x7ffe9000, track uncached-minus, req 
+	[    5.400353] reserve_memtype failed 0x7f800000-0x7ffe9000, track uncached-minus, req
 
 在内核中，搜索相关打印，并分析相关内核流程，可以确认是如下流程报的错误：
 
@@ -176,7 +176,7 @@ categories: Graphic
 					unsigned long off)
 	{
 		unsigned long prot;
-	
+
 		prot = pgprot_val(vma->vm_page_prot) & ~_PAGE_CACHE_MASK;
 		if (boot_cpu_data.x86 > 3)
 			pgprot_val(vma->vm_page_prot) =
@@ -212,7 +212,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	339         aligned_size = ALIGN(size, PAGE_SIZE);
 	...
 	343         if (aligned_size > pg->stolen_size) {
-	344                 /* 
+	344                 /*
 	345                  * allocate new buffer if the request size is larger than
 	346                  * the stolen memory size
 	347                  */
@@ -227,7 +227,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	}
 
 大概意思是：当需要分配的内存大小>stolen_size的时候，就调用MRSTLFBAllocBuffer分配内存，而MRSTLFBAllocBuffer实现的关键代码如下：
-	
+
 	1568 int MRSTLFBAllocBuffer(struct drm_device *dev, IMG_UINT32 ui32Size, MRSTLFB_BUFFER **ppBuffer)
 	...
 	1576         pvBuf = __vmalloc( ui32Size, GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO, __pgprot((pgprot_val(PAGE_KERNEL ) & ~_PAGE_CACHE_MASK) | _PAGE_CACHE_WC) );
@@ -264,7 +264,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	probe begin {
 	        printf("mmap system call stap begin!\n")
 	}
-	
+
 	probe kernel.statement("fb_mmap@drivers/video/fbmem.c:1357")
 	{
 	        if (pid() == target()) {
@@ -272,22 +272,22 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	        printf("%s(%d) stolen_size=%d \n",execname(),pid(),stolen_size)
 	        }
 	}
-	
+
 	probe end {
 	        printf("mmap system call stap end!\n")
 	}
 
 结果如下：
 
-	-bash-4.1# stap -c /home/jb/a.out mmap.stp 
+	-bash-4.1# stap -c /home/jb/a.out mmap.stp
 	mmap system call stap begin!
-	a.out(17337) stolen_size=8122368 
+	a.out(17337) stolen_size=8122368
 
 可见，大小为8122368，当显示器分辨率为1920*1080时，其需要的fb大小为：
 
 	1920*1080*4=8294400 > 8122368
 
-所以，可以介绍为什么23寸(分辨率为1920\*1080)显示器时，开机动画显示异常；而19寸显示器(分辨率为1440\*900)时可以显示了。
+所以，可以解释为什么23寸(分辨率为1920\*1080)显示器时，开机动画显示异常；而19寸显示器(分辨率为1440\*900)时可以显示了。
 
 # 尝试去掉__vmalloc中的`_PAGE_CACHE_WC`标记
 
@@ -310,11 +310,11 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	 48 static int psb_init_mem_type(struct ttm_bo_device *bdev, uint32_t type,
 	 49                              struct ttm_mem_type_manager *man)
 	 50 {
-	 51 
+	 51
 	 52         struct drm_psb_private *dev_priv =
 	 53             container_of(bdev, struct drm_psb_private, bdev);
 	 54         struct psb_gtt *pg = dev_priv->pg;
-	 55 
+	 55
 	 56         switch (type) {
 	 57         case TTM_PL_SYSTEM:
 	 58                 man->flags = TTM_MEMTYPE_FLAG_MAPPABLE;
@@ -398,7 +398,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	psb_driver_load
 	  psb_gtt_init
 	    ioremap_wc // 这里也要分配内存(stolen) ---》screen_base 内核态？
-	      reserve_memtype 
+	      reserve_memtype
 
 这段代码表明，stolen内存的属性中设置了WC标记，看似可疑，但是根据之前的分析，当使用高分辨率显示器时，由于需要Framebuffer大于stolen内存的大小，所以就没有使用stolen内存么？那stolen内存设置为WC属性跟这个问题有什么关系？
 
@@ -457,7 +457,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 		unsigned long mmio_pgoff;
 		unsigned long start;
 		u32 len;
-	
+
 		if (!info)
 			return -ENODEV;
 		fb = info->fbops;
@@ -480,12 +480,12 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	{
 		struct psb_fbdev *fbdev = info->par;
 		struct psb_framebuffer *psbfb = &fbdev->pfb;
-	
+
 		if (vma->vm_pgoff != 0)
 			return -EINVAL;
 		if (vma->vm_pgoff > (~0UL >> PAGE_SHIFT))
 			return -EINVAL;
-	
+
 		if (!psbfb->addr_space)
 			psbfb->addr_space = vma->vm_file->f_mapping;
 		/*
@@ -536,13 +536,13 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	  struct radeon_bo *buffer_object;
 	  ply_renderer_buffer_t *buffer;
 	  uint32_t buffer_id;
-	
+
 	  *row_stride = ply_round_to_multiple (width * 4, 256);
 	  /*调用显卡驱动bo创建接口，分配内存，创建buffer，实际以bo的形式，这里指定的GTT，说明是在内存(非显存)上分配*/
 	  buffer_object = radeon_bo_open (driver->manager, 0,
 	                                  height * *row_stride,
 	                                  0, RADEON_GEM_DOMAIN_GTT, 0);
-	
+
 	  if (buffer_object == NULL)
 	    {
 	      ply_trace ("Could not allocate GEM object for frame buffer: %m");
@@ -557,7 +557,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	      radeon_bo_unref (buffer_object);
 	      return 0;
 	    }
-	
+
 	  buffer = ply_renderer_buffer_new (driver,
 	                                    buffer_object, buffer_id,
 	                                    width, height, *row_stride);
@@ -565,7 +565,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	  ply_hashtable_insert (driver->buffers,
 	                        (void *) (uintptr_t) buffer_id,
 	                        buffer);
-	
+
 	  return buffer_id;
 	}
 
@@ -591,7 +591,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	  ply_renderer_buffer_t *buffer;
 	  //分配Framebuffer，调用驱动的CREATE_DUMB接口
 	  buffer = ply_renderer_buffer_new (driver, width, height);
-	
+
 	  if (buffer == NULL)
 	    {
 	      ply_trace ("Could not allocate GEM object for frame buffer: %m");
@@ -649,7 +649,7 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	1814                            DRIVER_IRQ_VBL | DRIVER_MODESET,
 	1815         .load = psb_driver_load,
 	1816         .unload = psb_driver_unload,
-	1817 
+	1817
 	1818         .ioctls = psb_ioctls,
 	1819         .num_ioctls = DRM_ARRAY_SIZE(psb_ioctls),
 	1820         .device_is_agp = psb_driver_device_is_agp,
@@ -674,9 +674,9 @@ psbfb驱动中，分配fb设备内存(就是Framebuffer)的流程为：
 	...
 
 而新版本内核(4.1)中的gma500驱动(新版本内核中，cdv驱动被整合到gma500驱动中)实现了相应接口
-	
+
 	static struct drm_driver driver = {
-		...	
+		...
 		.dumb_create = psb_gem_dumb_create,
 		.dumb_map_offset = psb_gem_dumb_map_gtt,
 		.dumb_destroy = drm_gem_dumb_destroy,
