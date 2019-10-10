@@ -6,6 +6,8 @@ permalink: /about/
 
 <img src="{{ site.baseurl }}/assets/profile-placeholder.gif" title="Profile Picture" class="profile">
 
+腾讯云成都招聘虚拟化内核工程师，想回成都的同学，欢迎私聊，wx：18708433520
+
 一名简单的技术爱好者。
 
 从Linux内核研究、技术支持、架构设计、性能优化，到桌面系统开发、性能优化，经历颇多。
@@ -18,4 +20,4 @@ permalink: /about/
 
 [我的github](https://github.com/happyseeker)
 
-我的邮箱: *jiang.biao@hotmail.com*
+我的邮箱: *benbjiang@tencent.com*
