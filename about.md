@@ -6,7 +6,7 @@ permalink: /about/
 
 <img src="{{ site.baseurl }}/assets/profile-placeholder.gif" title="Profile Picture" class="profile">
 
-腾讯云成都招聘虚拟化内核工程师，想回成都的同学，欢迎私聊，wx：18708433520
+腾讯云成都招聘虚拟化内核工程师，想回成都的同学，欢迎私聊，email: benbjiang@tencent.com
 
 一名简单的技术爱好者。
 
